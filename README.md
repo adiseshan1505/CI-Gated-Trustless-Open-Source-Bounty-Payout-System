@@ -26,6 +26,11 @@
   - [Components](#components)
   - [End-to-End Workflow](#end-to-end-workflow)
   - [Sequence Diagram](#sequence-diagram)
+- [Smart Contract Design](#smart-contract-design)
+  - [Core Functions](#core-functions)
+  - [Bounty & Submission Lifecycle](#bounty--submission-lifecycle)
+  - [Proposed Interface](#proposed-interface)
+  - [On-Chain Security Considerations](#on-chain-security-considerations)
 
 ---
 
@@ -173,3 +178,89 @@ sequenceDiagram
     SC->>SC: payout()
     SC-->>Dev: Transfer bounty ETH
 ```
+
+---
+
+## Smart Contract Design
+
+The escrow contract is the **single source of truth** for bounty funds. It never trusts the developer's claims on their own: funds move only after the authorised oracle confirms them.
+
+### Core Functions
+
+| Function | Caller | Description |
+|---|---|---|
+| `makeBounty()` | Repo owner | Creates a bounty for a GitHub repo + issue and **locks the ETH sent** (`msg.value`) in escrow. Emits `BountyCreated`. |
+| `makeSubmission()` | Developer | Registers a PR against an open bounty. The caller's address (`msg.sender`) is recorded as the payout address the oracle checks against. Emits `SubmissionCreated`, which triggers the oracle. |
+| `verifySubmission()` | Chainlink oracle only | Receives the oracle's verdict. If the submission is valid, marks it verified and calls `payout()`; otherwise marks it rejected. |
+| `payout()` | Internal (from `verifySubmission()`) | Transfers the escrowed ETH to the verified developer's wallet and closes the bounty. Emits `BountyPaid`. |
+
+### Bounty & Submission Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Open: makeBounty() + ETH
+    Open --> UnderVerification: makeSubmission()
+    UnderVerification --> Open: verifySubmission() → rejected
+    UnderVerification --> Paid: verifySubmission() → verified → payout()
+    Paid --> [*]
+```
+
+| State | Meaning |
+|---|---|
+| **Open** | Funded and accepting submissions. |
+| **UnderVerification** | A submission has been registered and the oracle is checking it. |
+| **Paid** | A submission was verified and the ETH went to the developer. This state is final. |
+
+### Proposed Interface
+
+> Illustrative only. The final signatures may change during implementation.
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+interface IBountyEscrow {
+    enum BountyStatus { Open, UnderVerification, Paid }
+
+    struct Bounty {
+        address owner;          // repo owner who funded the bounty
+        string  repo;           // e.g. "org/project"
+        uint256 issueNumber;    // GitHub issue the bounty is attached to
+        uint256 amount;         // escrowed wei
+        BountyStatus status;
+    }
+
+    struct Submission {
+        uint256 bountyId;
+        address developer;      // msg.sender of makeSubmission(), the payout address
+        uint256 prNumber;       // pull request against `repo`
+        uint256 submittedAt;
+        bool    verified;
+    }
+
+    event BountyCreated(uint256 indexed bountyId, address indexed owner, string repo, uint256 issueNumber, uint256 amount);
+    event SubmissionCreated(uint256 indexed submissionId, uint256 indexed bountyId, address indexed developer, uint256 prNumber);
+    event SubmissionVerified(uint256 indexed submissionId, bool success);
+    event BountyPaid(uint256 indexed bountyId, address indexed developer, uint256 amount);
+
+    /// Repo owner locks ETH for a GitHub issue.
+    function makeBounty(string calldata repo, uint256 issueNumber) external payable returns (uint256 bountyId);
+
+    /// Developer registers a PR; triggers the off-chain oracle request.
+    function makeSubmission(uint256 bountyId, uint256 prNumber) external returns (uint256 submissionId);
+
+    /// Oracle callback carrying the verification result. Restricted to the oracle.
+    function verifySubmission(uint256 submissionId, bool success) external;
+}
+```
+
+### On-Chain Security Considerations
+
+| Concern | Mitigation |
+|---|---|
+| **Unauthorised verification** | `verifySubmission()` accepts calls **only from the configured Chainlink oracle / router address** (an `onlyOracle` check). |
+| **Re-entrancy on payout** | Follow checks-effects-interactions: set the state to `Paid` **before** transferring ETH. Add a `nonReentrant` guard. |
+| **Double payout** | A bounty in the `Paid` state can't be verified or paid again. |
+| **Wallet spoofing** | The oracle checks that the wallet address written in the PR equals the `msg.sender` that called `makeSubmission()`. Nobody can claim someone else's PR. |
+| **Stale or replayed submissions** | The oracle checks the PR date against when the bounty was created and when the submission was made. |
+| **Failed ETH transfers** | Use `call{value: ...}` and check the return value, or a pull-payment withdrawal pattern as a fallback. |
