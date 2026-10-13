@@ -39,6 +39,12 @@
   - [Example Workflow (Sketch)](#example-workflow-sketch)
 - [Oracle Verification (Chainlink Functions)](#oracle-verification-chainlink-functions)
 - [Threat Model Summary](#threat-model-summary)
+- [Tech Stack](#tech-stack)
+- [Repository Structure](#repository-structure)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
+- [Author](#author)
 
 ---
 
@@ -393,3 +399,85 @@ If **all** checks pass, the oracle calls `verifySubmission(submissionId, true)` 
 | 6 | Fake verification | Attacker calls `verifySubmission()` directly | `onlyOracle` access control | Contract |
 | 7 | Double spend / re-entrancy | Re-entering `payout()` | State update before transfer + `nonReentrant` | Contract |
 | 8 | Owner non-payment | Owner withdraws after work is delivered | Funds locked in escrow when the bounty is created | Contract |
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 14, React, wallet integration (wagmi / ethers.js) |
+| Smart contracts | Solidity on an EVM-compatible chain (Ethereum testnet such as Sepolia for development) |
+| Contract tooling | Hardhat or Foundry for compiling, testing and deploying |
+| CI/CD verification | GitHub Actions |
+| Secret scanning | [Gitleaks](https://github.com/gitleaks/gitleaks) |
+| Vulnerability scanning | [Trivy](https://github.com/aquasecurity/trivy) |
+| Oracle / relayer | [Chainlink Functions](https://docs.chain.link/chainlink-functions) |
+| External data source | GitHub REST API (PRs, check runs) |
+
+---
+
+## Repository Structure
+
+**Current contents:**
+
+```text
+.
+├── assets/
+│   └── arch.jpeg      # System architecture diagram
+├── LICENSE            # MIT License
+└── README.md          # This document
+```
+
+**Planned layout** (not yet created):
+
+```text
+.
+├── contracts/         # Solidity escrow contract (makeBounty, makeSubmission, verifySubmission, payout)
+├── oracle/            # Chainlink Functions source and request config
+├── frontend/          # Next.js 14 dApp
+├── .github/
+│   └── workflows/     # Bounty verification workflow (tests, Gitleaks, Trivy)
+├── tests/             # Protected test suite
+└── assets/            # Diagrams and documentation images
+```
+
+---
+
+## Roadmap
+
+- [x] Problem statement and requirements
+- [x] System architecture and threat model
+- [ ] Escrow smart contract (`makeBounty`, `makeSubmission`, `verifySubmission`, `payout`) with unit tests
+- [ ] GitHub Actions verification workflow (protected `/tests`, Gitleaks, Trivy, network isolation)
+- [ ] Chainlink Functions source for PR and CI verification
+- [ ] Testnet deployment (e.g. Sepolia) and end-to-end demo
+- [ ] Next.js 14 frontend for creating bounties and tracking submissions
+- [ ] Security review of the contract and CI configuration
+
+---
+
+## Contributing
+
+Contributions, issues and design feedback are welcome.
+
+1. Fork the repository.
+2. Create a feature branch: `git checkout -b feature/<name>`.
+3. Commit your changes with clear messages.
+4. Open a pull request describing the change.
+
+Don't commit secrets, and don't change protected test suites to make a build pass. Those are exactly the behaviours this project exists to prevent.
+
+---
+
+## License
+
+Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for details.
+
+---
+
+## Author
+
+**Adiseshan** — [@adiseshan1505](https://github.com/adiseshan1505)
+
+*Built as a blockchain case study on CI-gated, trustless open-source bounty payouts.*
