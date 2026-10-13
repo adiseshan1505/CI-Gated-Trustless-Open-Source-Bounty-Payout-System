@@ -1,5 +1,6 @@
 # CI-Gated Trustless Open-Source Bounty Payout System
-
+# Case study for Blockchain- 23CSE335
+# By:- Adiseshan and Akshay
 > An automated, trustless escrow that pays open-source contributors in ETH the moment their pull request passes a hardened CI/CD security pipeline — no manual approval, no centralized intermediary.
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
