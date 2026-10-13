@@ -1,0 +1,190 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Design tokens.
+  Neumorphism derives every surface from one base colour. We keep that recipe
+  for containers/inputs, but add explicit hairline/strong borders so interactive
+  elements still meet WCAG 2.1 SC 1.4.11 (3:1 non-text contrast).
+  No pure black anywhere — layered slate avoids halation/eye strain.
+*/
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo,
+    Consolas, monospace;
+
+  --canvas: 20 23 29;
+  --surface: 27 32 42;
+  --surface-raised: 31 37 48;
+  --surface-sunken: 22 26 34;
+
+  --border-hairline: 74 84 116;
+  --border-strong: 109 124 165;
+
+  --text-primary: 230 234 242;
+  --text-secondary: 167 176 192;
+  --text-muted: 133 143 162;
+
+  --accent-verify: 52 214 166;
+  --accent-action: 124 140 255;
+  --accent-escrow: 245 185 62;
+  --danger: 255 110 110;
+  --success: 61 220 132;
+
+  --shadow-dark: 0 0 0;
+  --shadow-dark-a: 0.55;
+  --shadow-light: 255 255 255;
+  --shadow-light-a: 0.045;
+
+  --shadow-offset: 8px;
+  --shadow-blur: 16px;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --canvas: 224 229 236;
+  --surface: 230 234 240;
+  --surface-raised: 236 240 246;
+  --surface-sunken: 217 222 230;
+
+  --border-hairline: 197 204 216;
+  --border-strong: 120 130 150;
+
+  --text-primary: 30 36 48;
+  --text-secondary: 71 81 98;
+  --text-muted: 90 100 118;
+
+  --accent-verify: 16 145 110;
+  --accent-action: 79 91 213;
+  --accent-escrow: 176 122 8;
+  --danger: 200 60 60;
+  --success: 22 150 90;
+
+  --shadow-dark: 163 177 198;
+  --shadow-dark-a: 0.6;
+  --shadow-light: 255 255 255;
+  --shadow-light-a: 0.85;
+}
+
+* {
+  border-color: rgb(var(--border-hairline));
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: rgb(var(--canvas));
+  color: rgb(var(--text-primary));
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background-color: rgb(var(--accent-action) / 0.35);
+  color: rgb(var(--text-primary));
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--accent-action));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Thin, theme-aware scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--border-strong)) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: rgb(var(--border-strong));
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+@layer components {
+  /* Base neumorphic surface — raised out of the canvas */
+  .neu-panel {
+    background-color: rgb(var(--surface));
+    border: 1px solid rgb(var(--border-hairline));
+    border-radius: 1rem;
+    box-shadow:
+      var(--shadow-offset) var(--shadow-offset) var(--shadow-blur)
+        rgb(var(--shadow-dark) / var(--shadow-dark-a)),
+      calc(var(--shadow-offset) * -1) calc(var(--shadow-offset) * -1)
+        var(--shadow-blur) rgb(var(--shadow-light) / var(--shadow-light-a));
+  }
+
+  /* Recessed surface — inputs, wells */
+  .neu-well {
+    background-color: rgb(var(--surface-sunken));
+    border: 1px solid rgb(var(--border-hairline));
+    border-radius: 0.75rem;
+    box-shadow:
+      inset calc(var(--shadow-offset) * 0.6) calc(var(--shadow-offset) * 0.6)
+        calc(var(--shadow-blur) * 0.7) rgb(var(--shadow-dark) / var(--shadow-dark-a)),
+      inset calc(var(--shadow-offset) * -0.6) calc(var(--shadow-offset) * -0.6)
+        calc(var(--shadow-blur) * 0.7) rgb(var(--shadow-light) / var(--shadow-light-a));
+  }
+
+  .neu-divider {
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent,
+      rgb(var(--border-strong) / 0.6),
+      transparent
+    );
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background-color: rgb(var(--surface-sunken));
+  }
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(var(--shadow-light) / 0.06),
+      transparent
+    );
+    animation: shimmer 1.6s infinite;
+  }
+}
