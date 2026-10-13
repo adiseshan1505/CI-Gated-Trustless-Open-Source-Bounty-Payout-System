@@ -31,6 +31,14 @@
   - [Bounty & Submission Lifecycle](#bounty--submission-lifecycle)
   - [Proposed Interface](#proposed-interface)
   - [On-Chain Security Considerations](#on-chain-security-considerations)
+- [CI/CD Security Gating](#cicd-security-gating)
+  - [Gitleaks: Secret Detection](#gitleaks-secret-detection)
+  - [Trivy: Vulnerability Scan](#trivy-vulnerability-scan)
+  - [Folder-Level Permissioning for /tests](#folder-level-permissioning-for-tests)
+  - [Network & API Isolation](#network--api-isolation)
+  - [Example Workflow (Sketch)](#example-workflow-sketch)
+- [Oracle Verification (Chainlink Functions)](#oracle-verification-chainlink-functions)
+- [Threat Model Summary](#threat-model-summary)
 
 ---
 
@@ -264,3 +272,124 @@ interface IBountyEscrow {
 | **Wallet spoofing** | The oracle checks that the wallet address written in the PR equals the `msg.sender` that called `makeSubmission()`. Nobody can claim someone else's PR. |
 | **Stale or replayed submissions** | The oracle checks the PR date against when the bounty was created and when the submission was made. |
 | **Failed ETH transfers** | Use `call{value: ...}` and check the return value, or a pull-payment withdrawal pattern as a fallback. |
+
+---
+
+## CI/CD Security Gating
+
+When a PR is submitted, an **isolated GitHub Actions verification workflow** runs on the **source (original) repository**. A payout can happen only if **every** job succeeds (exit code `0`).
+
+```text
+PR opened ──► GitHub Actions (isolated runner, no outbound network, no real secrets)
+               ├─ 1. Protected test suite   (/tests cannot be modified by the PR)
+               ├─ 2. Gitleaks               (secret & credential detection)
+               └─ 3. Trivy                  (vulnerabilities & malicious packages)
+                         │
+                   all exit 0? ──► status = success ──► read by the oracle
+```
+
+### Gitleaks: Secret Detection
+
+- Scans the PR diff and commit history for **API keys, tokens, private keys and credentials**.
+- **Threat addressed:** unvetted code leaking secrets to an attacker, by accident or on purpose.
+- Any finding fails the job, so no payout happens.
+
+### Trivy: Vulnerability Scan
+
+- Scans the filesystem and dependency manifests for **known CVEs, misconfigurations and malicious packages**.
+- **Threat addressed:** forked contributions bringing in malicious code or vulnerable dependencies.
+- Findings at or above the configured severity (e.g. `HIGH,CRITICAL`) fail the job.
+
+### Folder-Level Permissioning for `/tests`
+
+- The repo owner commits the tests for the issue **before** the bounty is opened. They define what "done" means.
+- The workflow fails if the PR **adds, modifies or deletes anything under `/tests`**. It can also force-check out `/tests` from the base branch before running.
+- `CODEOWNERS` plus branch protection on `/tests` add a second layer of protection.
+- **Threat addressed:** contributors removing or weakening tests to force a passing build.
+
+### Network & API Isolation
+
+- Outbound network traffic is **blocked** while untrusted code runs (for example with an egress-blocking step or a container started with `--network none`).
+- The verification workflow uses **no production API keys or secrets**. It uses the `pull_request` trigger, which doesn't expose repository secrets to fork PRs, plus a minimal `permissions:` block.
+- **Threat addressed:** malicious PR scripts making outgoing calls or exfiltrating environment secrets.
+
+### Example Workflow (Sketch)
+
+> Illustrative only. Action versions and configuration will be pinned during implementation.
+
+```yaml
+name: bounty-verification
+
+on:
+  pull_request:            # fork PRs run without repository secrets
+
+permissions:
+  contents: read           # least privilege
+
+jobs:
+  protect-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Fail if /tests was modified
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -q '^tests/'; then
+            echo "::error::Changes to /tests are not allowed"; exit 1
+          fi
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+  tests:
+    needs: [protect-tests, gitleaks, trivy]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run test suite with networking disabled
+        run: docker run --rm --network none -v "$PWD:/app" -w /app <test-image> <test-command>
+```
+
+---
+
+## Oracle Verification (Chainlink Functions)
+
+The `SubmissionCreated` event triggers a **Chainlink Functions** request. The off-chain JavaScript source queries the GitHub API and returns one verdict to the contract.
+
+| Check | What is verified | Why |
+|---|---|---|
+| **PR date** | The PR was created and updated after the bounty was opened and before the submission / deadline. | Stops reuse of old or unrelated PRs. |
+| **PR destination repo** | The PR's base repository matches the `repo` stored on the bounty. | Stops pointing the bounty at a PR in a repo the attacker controls. |
+| **PR wallet address == `msg.sender`** | The wallet address in the PR body matches the address that called `makeSubmission()`. | Ties the PR author to the payout address and blocks front-running or claiming someone else's PR. |
+| **GitHub Action status** | Every required check run for the PR's head commit finished with `success`. | Makes sure tests, Gitleaks and Trivy all passed (exit code `0`). |
+
+If **all** checks pass, the oracle calls `verifySubmission(submissionId, true)` and the contract immediately runs `payout()`. Otherwise the submission is rejected and the bounty stays open.
+
+---
+
+## Threat Model Summary
+
+| # | Threat | Attack vector | Safeguard | Layer |
+|---|---|---|---|---|
+| 1 | Secret / credential leakage | PR commits hard-coded keys or tokens | Gitleaks scan; no real secrets in CI | CI |
+| 2 | Malicious code injection | Malicious dependency or payload in the fork | Trivy scan; blocked network | CI |
+| 3 | Test suite tampering | PR deletes or weakens tests to force a pass | `/tests` folder protection + CODEOWNERS | CI / GitHub |
+| 4 | CI environment exploitation | PR script calls out or exfiltrates env vars | Network isolation, `pull_request` trigger, least-privilege `permissions` | CI |
+| 5 | Payout to the wrong person | Attacker claims someone else's PR | Oracle checks the PR wallet against `msg.sender` | Oracle |
+| 6 | Fake verification | Attacker calls `verifySubmission()` directly | `onlyOracle` access control | Contract |
+| 7 | Double spend / re-entrancy | Re-entering `payout()` | State update before transfer + `nonReentrant` | Contract |
+| 8 | Owner non-payment | Owner withdraws after work is delivered | Funds locked in escrow when the bounty is created | Contract |
