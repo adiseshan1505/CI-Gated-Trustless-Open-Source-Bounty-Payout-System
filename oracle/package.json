@@ -1,0 +1,19 @@
+{
+  "name": "bounty-escrow-oracle",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chainlink Functions source, local simulator and relayer for BountyEscrow",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "simulate": "node simulate.js",
+    "relayer": "node relayer.js"
+  },
+  "dependencies": {
+    "dotenv": "16.4.7",
+    "ethers": "6.17.0"
+  }
+}
