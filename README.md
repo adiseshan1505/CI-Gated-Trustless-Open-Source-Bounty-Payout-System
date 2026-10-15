@@ -10,7 +10,7 @@
 ![Chainlink](https://img.shields.io/badge/Chainlink-Functions-375BD2?logo=chainlink&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js)
 
-> **Project status:** The **escrow smart contract**, the **Chainlink Functions oracle source**, the **relayer** and the **Next.js frontend** are implemented and tested locally. The frontend reads the deployed contract and shows all six oracle checks from the `SubmissionChecks` event/`submissionChecks` mapping (with a mock fallback for offline development). The GitHub Actions verification workflow and the Sepolia deployment are still to do (see [Roadmap](#roadmap)).
+> **Project status:** The **escrow smart contract**, the **Chainlink Functions oracle source**, the **relayer** and the **Next.js frontend** are implemented and tested locally. The frontend reads the deployed contract and shows all six oracle checks from the `SubmissionChecks` event/`submissionChecks` mapping (with a mock fallback for offline development). The GitHub Actions verification workflow runs in the demo target repo [smallworldsdev/blockchain-project-test-repo](https://github.com/smallworldsdev/blockchain-project-test-repo). The remaining step is the Sepolia deployment (see [Testing with the Demo Repo](#testing-with-the-demo-repo)).
 
 ---
 
@@ -51,6 +51,10 @@
   - [Sepolia Deployment (Chainlink Functions Path)](#sepolia-deployment-chainlink-functions-path)
   - [Frontend](#frontend)
   - [Submitting a PR for a Bounty](#submitting-a-pr-for-a-bounty)
+- [Testing with the Demo Repo](#testing-with-the-demo-repo)
+  - [A. Local Hardhat Chain (Relayer)](#a-local-hardhat-chain-relayer)
+  - [B. Sepolia (Chainlink Functions)](#b-sepolia-chainlink-functions)
+  - [Expected Results](#expected-results)
 - [Trust Assumptions & Known Limitations](#trust-assumptions--known-limitations)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
@@ -219,7 +223,8 @@ The escrow contract is the **single source of truth** for bounty funds. It never
 | `makeBounty()` | Repo owner | Creates a bounty for a GitHub repo + issue and **locks the ETH sent** (`msg.value`) in escrow. Emits `BountyCreated`. |
 | `makeSubmission()` | Developer | Registers a PR against an open bounty. The caller's address (`msg.sender`) is recorded as the payout address the oracle checks against. Emits `SubmissionCreated`, which triggers the oracle. |
 | `fulfillRequest()` | Chainlink Functions router only | Receives the DON's bitmask of passed checks. If all six bits are set, the submission is verified and `payout()` runs; otherwise it is rejected. |
-| `verifySubmission()` | Relayer only | Same verdict, delivered by the off-chain relayer (`oracle/relayer.js`) instead of the DON. |
+| `verifySubmissionChecks()` | Relayer only | Same verdict as the DON, as the full 6-bit mask, delivered by the off-chain relayer (`oracle/relayer.js`). The contract records which checks failed. |
+| `verifySubmission()` | Relayer only | Pass/fail-only variant from the original interface. It records the mask as `0x3f` or `0`. |
 | `payout()` | Internal (after a successful verification) | Transfers the escrowed ETH to the verified developer's wallet and closes the bounty. Emits `BountyPaid`. |
 | `withdraw()` | Developer | Claims a payout whose direct transfer failed, e.g. a contract wallet that rejected ETH. |
 | `setFunctionsConfig()`, `setSecrets()`, `setRelayer()` | Contract owner | Configure the Chainlink subscription, DON ID, oracle source, DON-hosted secrets and the relayer address. |
@@ -408,7 +413,7 @@ If GitHub returns an error, for example the PR doesn't exist, the DON returns an
 | Path | Who calls the contract | When to use |
 |---|---|---|
 | **Chainlink Functions** | The DON, via the Functions router → `fulfillRequest()` | Trust-minimised production path. Needs a funded Functions subscription with the contract added as a consumer. |
-| **Relayer** | [`oracle/relayer.js`](oracle/relayer.js) → `verifySubmission()` | Runs the **same** `source.js` checks in Node and reports the verdict. Useful locally and on testnets without LINK. The relayer is a trusted party. |
+| **Relayer** | [`oracle/relayer.js`](oracle/relayer.js) → `verifySubmissionChecks()` | Runs the **same** `source.js` checks in Node and reports the verdict. Useful locally and on testnets without LINK. The relayer is a trusted party. |
 
 Both paths can be enabled together, and the first verdict for a submission wins. A rejected PR can be resubmitted, for example after CI goes green.
 
@@ -422,9 +427,9 @@ Both paths can be enabled together, and the first verdict for a submission wins.
 | 4 | CI environment exploitation | PR script calls out or exfiltrates env vars | Network isolation, `pull_request` trigger, least-privilege `permissions` | CI |
 | 5 | Payout to the wrong person | Attacker claims someone else's PR | Oracle checks the PR wallet against `msg.sender` | Oracle |
 | 6 | Fake verification | Attacker calls `verifySubmission()` or the Functions callback directly | `onlyRelayer` + `OnlyRouterCanFulfill` + known request IDs only | Contract |
-| 9 | Bounty sniping with an unrelated PR | Attacker submits a green PR that fixes a different issue | Oracle requires the PR body to close the bounty's issue | Oracle |
 | 7 | Double spend / re-entrancy | Re-entering `payout()` | State update before transfer + `nonReentrant` | Contract |
 | 8 | Owner non-payment | Owner withdraws after work is delivered | Funds locked in escrow when the bounty is created | Contract |
+| 9 | Bounty sniping with an unrelated PR | Attacker submits a green PR that fixes a different issue | Oracle requires the PR body to close the bounty's issue | Oracle |
 
 ---
 
@@ -516,7 +521,7 @@ cd ../oracle && cp .env.example .env          # set ESCROW_ADDRESS and FROM_BLOC
 npm run relayer
 ```
 
-Then create a bounty and a submission from the frontend (pointed at `localhost`) or from a Hardhat console. The relayer runs the checks against GitHub and calls `verifySubmission`.
+Then create a bounty and a submission from the frontend (pointed at `localhost`) or from a Hardhat console. The relayer runs the checks against GitHub and calls `verifySubmissionChecks`.
 
 ### Sepolia Deployment (Chainlink Functions Path)
 
@@ -560,6 +565,100 @@ an in-browser mock instead — no contract is needed.
 
 ---
 
+## Testing with the Demo Repo
+
+[smallworldsdev/blockchain-project-test-repo](https://github.com/smallworldsdev/blockchain-project-test-repo) is the demo target repo:
+
+- **Issue #1:** `slugify()` leaves punctuation and surrounding separators in slugs. The tests in `tests/` fail until it is fixed.
+- **Workflow:** [`.github/workflows/bounty-verification.yml`](https://github.com/smallworldsdev/blockchain-project-test-repo/blob/main/.github/workflows/bounty-verification.yml) runs the four required jobs (`protect-tests`, `gitleaks`, `trivy`, `tests`).
+- **PR #2** (fix applied, CI green) and **PR #3** (no fix, `tests` job fails) were used for the first local run.
+
+> **The PR date check:** a PR only passes `prDate` if it was opened **after** the bounty was created. Always create the bounty first, then open the PRs. The existing PRs #2 and #3 only pass `prDate` against bounties created before 2026-10-15 08:20 UTC.
+
+Before touching a chain, you can check any PR with the simulator:
+
+```bash
+cd oracle
+node simulate.js smallworldsdev/blockchain-project-test-repo 1 <pr> <wallet-in-pr> <bountyCreatedAt-unix>
+```
+
+### A. Local Hardhat Chain (Relayer)
+
+No testnet funds needed. The relayer stands in for the Chainlink DON.
+
+```bash
+# terminal 1: local chain
+cd contracts && npx hardhat node
+
+# terminal 2: deploy (relayer = Hardhat account #0)
+cd contracts && npm run deploy:localhost
+
+# terminal 2: relayer
+cd ../oracle && cp .env.example .env
+#   RPC_URL=http://127.0.0.1:8545
+#   RELAYER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80   # Hardhat account #0 (public test key)
+#   ESCROW_ADDRESS / FROM_BLOCK = values printed by the deploy
+#   GITHUB_TOKEN=<optional>
+npm run relayer
+
+# terminal 3: frontend
+cd frontend && cp .env.example .env.local
+#   NEXT_PUBLIC_USE_MOCKS=false
+#   NEXT_PUBLIC_CHAIN_ID=31337
+#   NEXT_PUBLIC_ESCROW_ADDRESS / NEXT_PUBLIC_DEPLOY_BLOCK = values printed by the deploy
+npm run dev
+```
+
+1. In MetaMask, add the network `http://127.0.0.1:8545` (chain ID `31337`). Import a Hardhat test account as the repo owner, and import the account named in the PR's `Wallet:` line as the developer. PRs #2 and #3 use `0x3C44…93BC`, which is Hardhat account #2.
+2. As the **repo owner**, create a bounty for `smallworldsdev/blockchain-project-test-repo`, issue `1`.
+3. Open a **new** PR against the repo, after the bounty exists, with `Closes #1` and `Wallet: <developer address>`. Wait for all four checks to go green.
+4. As the **developer**, submit the PR number on the bounty page. The relayer logs the six checks and settles it within one poll (about 15 s), and the UI updates on its own.
+5. Repeat with a PR that doesn't fix the bug to see a rejection with only `ciPassed` failing.
+
+> Hardhat's default keys are public. Never use them on Sepolia or mainnet.
+
+### B. Sepolia (Chainlink Functions)
+
+**What you need:**
+- Sepolia ETH for two wallets: a **repo owner / deployer** wallet and a **developer** wallet.
+- Sepolia LINK (from [faucets.chain.link](https://faucets.chain.link)).
+- An RPC URL (Infura, Alchemy or similar).
+
+1. **Subscription:** at [functions.chain.link](https://functions.chain.link) (Sepolia), create a subscription and fund it with a few LINK. Note the subscription ID.
+2. **Deploy:**
+   ```bash
+   cd contracts && cp .env.example .env
+   #   SEPOLIA_RPC_URL, DEPLOYER_PRIVATE_KEY (testnet-only wallet), FUNCTIONS_SUBSCRIPTION_ID
+   #   leave RELAYER_ADDRESS empty for a Chainlink-only deployment
+   npm run deploy:sepolia
+   ```
+3. **Add consumer:** on the subscription page, click **Add consumer** and paste the deployed address. Until you do this, `makeSubmission` reverts.
+4. **Frontend:** set `NEXT_PUBLIC_USE_MOCKS=false`, `NEXT_PUBLIC_CHAIN_ID=11155111`, and `NEXT_PUBLIC_ESCROW_ADDRESS` / `NEXT_PUBLIC_DEPLOY_BLOCK` from the deploy output. Optionally set `NEXT_PUBLIC_RPC_URL`. Then run `npm run dev`.
+5. **Bounty:** as the repo owner, create a bounty for `smallworldsdev/blockchain-project-test-repo`, issue `1`, with e.g. 0.01 ETH.
+6. **PRs:** fork the demo repo from the developer's GitHub account and open two PRs **after** step 5, both with `Closes #1` and `Wallet: <developer address>`:
+   - one with the `slugify()` fix,
+   - one without the fix.
+
+   GitHub may hold Actions on a first-time contributor's fork PR until a maintainer (Akshay) clicks **Approve and run**.
+7. **Submit:** once CI has finished on both PRs, submit each PR number from the developer wallet. About 1–2 minutes later the DON responds and the submission page shows the six checks. The fixed PR is paid out and the bounty becomes **Paid**.
+
+   Submit the unfixed PR first, because the first passing PR closes the bounty.
+8. **Proof:** check the transactions on [Sepolia Etherscan](https://sepolia.etherscan.io). The `fulfillRequest` call comes from the Functions router, and the `BountyPaid` event transfers the ETH to the developer. The subscription page lists each request with its cost and result.
+
+If a submission shows an `OracleError` event, GitHub was unreachable or rate-limited from the DON. Upload a GitHub token as a [DON-hosted secret](https://docs.chain.link/chainlink-functions/resources/secrets) named `githubToken`, call `setSecrets(slotId, version)`, and resubmit.
+
+### Expected Results
+
+| PR | prDate | destRepo | walletMatch | ciPassed | issueLinked | protectedPaths | Result |
+|---|---|---|---|---|---|---|---|
+| Fix applied, CI green | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **Paid** (`0x3f`) |
+| No fix, `tests` job fails | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | Rejected (`0x37`) |
+| Edits `tests/` | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | Rejected (`0x17`) |
+| Wallet line names someone else | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | Rejected (`0x3b`) |
+| PR opened before the bounty | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | Rejected (`0x3e`) |
+
+---
+
 ## Trust Assumptions & Known Limitations
 
 - **Contract owner:** the deployer can change the relayer, the Functions subscription and the oracle source. A malicious owner could point verification at code they control. For production, move ownership to a multisig or timelock, or renounce it once configured.
@@ -579,8 +678,9 @@ an in-browser mock instead — no contract is needed.
 - [x] Chainlink Functions source for PR and CI verification, with offline tests and a live simulator
 - [x] Relayer verification path
 - [x] Next.js 14 frontend for creating bounties and tracking submissions (real contract, with an offline mock fallback)
-- [ ] GitHub Actions verification workflow (protected `/tests`, Gitleaks, Trivy, network isolation) and demo target repo
-- [ ] Testnet deployment (Sepolia) and end-to-end demo
+- [x] GitHub Actions verification workflow (protected `/tests`, Gitleaks, Trivy, network isolation) and demo target repo
+- [x] Local end-to-end run against the demo repo (relayer path)
+- [ ] Testnet deployment (Sepolia) and end-to-end demo with Chainlink Functions
 - [x] Frontend: switch to the deployed contract and show per-check results from `SubmissionChecks`
 - [ ] Bounty deadlines and owner refunds
 - [ ] Security review of the contract and CI configuration
