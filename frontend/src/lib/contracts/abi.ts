@@ -1149,6 +1149,24 @@ export const bountyEscrowAbi = [
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "submissionId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint8",
+        "name": "checks",
+        "type": "uint8"
+      }
+    ],
+    "name": "verifySubmissionChecks",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "withdraw",
     "outputs": [],
