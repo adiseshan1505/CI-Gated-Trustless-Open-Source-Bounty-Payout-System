@@ -1,6 +1,12 @@
 import { createPublicClient, http, type Address as ViemAddress } from "viem";
 import { bountyEscrowAbi } from "./abi";
-import { CHAIN, ESCROW_ADDRESS } from "./config";
+import {
+  CHAIN,
+  DATA_MODE,
+  DEPLOY_BLOCK,
+  ESCROW_ADDRESS,
+  RPC_URL,
+} from "./config";
 import { mockStore } from "./mock-store";
 import {
   BountyStatus,
@@ -10,9 +16,8 @@ import {
 } from "./types";
 
 /**
- * Read-source abstraction. `mockSource` is active until the contract is
- * deployed; `onchainSource` reads directly from the escrow contract and
- * derives timestamps from event logs.
+ * Read-source abstraction. `mockSource` is used when NEXT_PUBLIC_USE_MOCKS is
+ * not "false"; `onchainSource` reads directly from the deployed escrow contract.
  */
 export interface ReadSource {
   listBounties(): Promise<Bounty[]>;
@@ -20,6 +25,20 @@ export interface ReadSource {
   listSubmissions(bountyId: bigint): Promise<Submission[]>;
   getSubmission(id: bigint): Promise<Submission | null>;
   listSubmissionsByDeveloper(developer: Address): Promise<Submission[]>;
+}
+
+/** Thrown by on-chain reads when real mode is on but no address is configured. */
+export class ContractNotConfiguredError extends Error {
+  constructor() {
+    super(
+      "Escrow contract address is not configured. Set NEXT_PUBLIC_ESCROW_ADDRESS (and NEXT_PUBLIC_USE_MOCKS=false).",
+    );
+    this.name = "ContractNotConfiguredError";
+  }
+}
+
+function assertConfigured() {
+  if (DATA_MODE === "unconfigured") throw new ContractNotConfiguredError();
 }
 
 export const mockSource: ReadSource = {
@@ -33,7 +52,7 @@ export const mockSource: ReadSource = {
 
 export const publicClient = createPublicClient({
   chain: CHAIN,
-  transport: http(),
+  transport: http(RPC_URL),
 });
 
 function statusFromNumber(value: number | bigint): BountyStatus {
@@ -43,133 +62,102 @@ function statusFromNumber(value: number | bigint): BountyStatus {
   return BountyStatus.Open;
 }
 
-/** Fetches block timestamps for a set of unique block numbers. */
-async function timestampsFor(blockNumbers: bigint[]): Promise<Map<bigint, bigint>> {
-  const unique = [...new Set(blockNumbers.map((b) => b.toString()))].map(BigInt);
-  const map = new Map<bigint, bigint>();
-  await Promise.all(
-    unique.map(async (bn) => {
-      try {
-        const block = await publicClient.getBlock({ blockNumber: bn });
-        map.set(bn, block.timestamp);
-      } catch {
-        map.set(bn, 0n);
-      }
-    }),
-  );
-  return map;
-}
+type RawBounty = {
+  owner: Address;
+  repo: string;
+  issueNumber: bigint;
+  amount: bigint;
+  status: number | bigint;
+};
+
+type RawSubmission = {
+  bountyId: bigint;
+  developer: Address;
+  prNumber: bigint;
+  submittedAt: bigint;
+  verified: boolean;
+};
 
 export const onchainSource: ReadSource = {
   async listBounties() {
+    assertConfigured();
     const count = (await publicClient.readContract({
       address: ESCROW_ADDRESS,
       abi: bountyEscrowAbi,
       functionName: "bountyCount",
     })) as bigint;
+    if (count === 0n) return [];
 
-    const logs = await publicClient.getContractEvents({
-      address: ESCROW_ADDRESS,
-      abi: bountyEscrowAbi,
-      eventName: "BountyCreated",
-      fromBlock: 0n,
-    });
-    const createdByBounty = new Map<string, { owner: Address; repo: string; issueNumber: bigint; amount: bigint; blockNumber: bigint }>();
-    for (const log of logs) {
-      const a = log.args as {
-        bountyId?: bigint;
-        owner?: Address;
-        repo?: string;
-        issueNumber?: bigint;
-        amount?: bigint;
-      };
-      if (a.bountyId === undefined) continue;
-      createdByBounty.set(a.bountyId.toString(), {
-        owner: (a.owner ?? "0x0") as Address,
-        repo: a.repo ?? "",
-        issueNumber: a.issueNumber ?? 0n,
-        amount: a.amount ?? 0n,
-        blockNumber: (log.blockNumber ?? 0n) as bigint,
+    const ids = Array.from({ length: Number(count) }, (_, i) => BigInt(i));
+
+    // Batch both reads into one JSON-RPC round trip each (EIP-5792 multicall).
+    // `deployless: true` runs Multicall3 from embedded bytecode via an eth_call
+    // state override, so it works even on chains where Multicall3 isn't deployed
+    // (e.g. a fresh `npx hardhat node`) and viem's chain definition has no
+    // multicall3 address.
+    const [bountyResults, createdResults] = await Promise.all([
+      publicClient.multicall({
+        deployless: true,
+        contracts: ids.map((id) => ({
+          address: ESCROW_ADDRESS,
+          abi: bountyEscrowAbi,
+          functionName: "getBounty" as const,
+          args: [id] as const,
+        })),
+        allowFailure: true,
+      }),
+      publicClient.multicall({
+        deployless: true,
+        contracts: ids.map((id) => ({
+          address: ESCROW_ADDRESS,
+          abi: bountyEscrowAbi,
+          functionName: "bountyCreatedAt" as const,
+          args: [id] as const,
+        })),
+        allowFailure: true,
+      }),
+    ]);
+
+    const bounties: Bounty[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const br = bountyResults[i];
+      if (br.status !== "success") continue;
+      const r = br.result as unknown as RawBounty;
+      const cr = createdResults[i];
+      const createdAt =
+        cr.status === "success" ? (cr.result as bigint) : 0n;
+      bounties.push({
+        id: ids[i],
+        owner: r.owner,
+        repo: r.repo,
+        issueNumber: r.issueNumber,
+        amountWei: r.amount,
+        status: statusFromNumber(r.status),
+        createdAt,
       });
     }
-    const ts = await timestampsFor([...createdByBounty.values()].map((v) => v.blockNumber));
 
-    const total = Number(count);
-    const bounties: Bounty[] = [];
-    for (let i = 0; i < total; i++) {
-      const id = BigInt(i);
-      const cached = createdByBounty.get(id.toString());
-      if (cached) {
-        bounties.push({
-          id,
-          owner: cached.owner,
-          repo: cached.repo,
-          issueNumber: cached.issueNumber,
-          amountWei: cached.amount,
-          status: BountyStatus.Open,
-          createdAt: ts.get(cached.blockNumber) ?? 0n,
-        });
-        continue;
-      }
-      const b = await onchainSource.getBounty(id);
-      if (b) bounties.push(b);
-    }
-    // Overlay live status from the contract.
-    const withStatus = await Promise.all(
-      bounties.map(async (b) => {
-        try {
-          const raw = await publicClient.readContract({
-            address: ESCROW_ADDRESS,
-            abi: bountyEscrowAbi,
-            functionName: "getBounty",
-            args: [b.id],
-          });
-          const r = raw as unknown as {
-            owner: Address;
-            repo: string;
-            issueNumber: bigint;
-            amount: bigint;
-            status: number | bigint;
-          };
-          return {
-            ...b,
-            status: statusFromNumber(r.status),
-            amountWei: r.amount,
-            repo: r.repo,
-            issueNumber: r.issueNumber,
-          };
-        } catch {
-          return b;
-        }
-      }),
-    );
-    return withStatus.sort((a, b) => Number(b.createdAt - a.createdAt));
+    return bounties.sort((a, b) => Number(b.createdAt - a.createdAt));
   },
 
   async getBounty(id) {
+    assertConfigured();
     try {
-      const raw = await publicClient.readContract({
-        address: ESCROW_ADDRESS,
-        abi: bountyEscrowAbi,
-        functionName: "getBounty",
-        args: [id],
-      });
-      const r = raw as unknown as {
-        owner: Address;
-        repo: string;
-        issueNumber: bigint;
-        amount: bigint;
-        status: number | bigint;
-      };
-      const logs = await publicClient.getContractEvents({
-        address: ESCROW_ADDRESS,
-        abi: bountyEscrowAbi,
-        eventName: "BountyCreated",
-        args: { bountyId: id },
-        fromBlock: 0n,
-      });
-      const blockNumber = (logs[0]?.blockNumber ?? 0n) as bigint;
-      const ts = await timestampsFor([blockNumber]);
+      const [raw, createdAt] = await Promise.all([
+        publicClient.readContract({
+          address: ESCROW_ADDRESS,
+          abi: bountyEscrowAbi,
+          functionName: "getBounty",
+          args: [id],
+        }),
+        publicClient.readContract({
+          address: ESCROW_ADDRESS,
+          abi: bountyEscrowAbi,
+          functionName: "bountyCreatedAt",
+          args: [id],
+        }),
+      ]);
+      const r = raw as unknown as RawBounty;
       return {
         id,
         owner: r.owner,
@@ -177,7 +165,7 @@ export const onchainSource: ReadSource = {
         issueNumber: r.issueNumber,
         amountWei: r.amount,
         status: statusFromNumber(r.status),
-        createdAt: ts.get(blockNumber) ?? 0n,
+        createdAt: createdAt as bigint,
       };
     } catch {
       return null;
@@ -185,77 +173,58 @@ export const onchainSource: ReadSource = {
   },
 
   async listSubmissions(bountyId) {
+    assertConfigured();
     const logs = await publicClient.getContractEvents({
       address: ESCROW_ADDRESS,
       abi: bountyEscrowAbi,
       eventName: "SubmissionCreated",
       args: { bountyId },
-      fromBlock: 0n,
+      fromBlock: DEPLOY_BLOCK,
     });
-    const ts = await timestampsFor(logs.map((l) => (l.blockNumber ?? 0n) as bigint));
-    const submissions: Submission[] = [];
-    for (const log of logs) {
-      const a = log.args as { submissionId?: bigint; developer?: Address; prNumber?: bigint };
-      if (a.submissionId === undefined) continue;
-      const verified = await onchainSource.getSubmission(a.submissionId);
-      submissions.push(
-        verified ?? {
-          id: a.submissionId,
-          bountyId,
-          developer: (a.developer ?? "0x0") as Address,
-          prNumber: a.prNumber ?? 0n,
-          submittedAt: ts.get((log.blockNumber ?? 0n) as bigint) ?? 0n,
-          verified: null,
-          paid: false,
-        },
-      );
-    }
-    return submissions;
+    const ids = logs
+      .map((l) => (l.args as { submissionId?: bigint }).submissionId)
+      .filter((v): v is bigint => v !== undefined);
+
+    const submissions = await Promise.all(
+      ids.map((id) => onchainSource.getSubmission(id)),
+    );
+    return submissions.filter((s): s is Submission => s !== null);
   },
 
   async getSubmission(id) {
+    assertConfigured();
     try {
-      const raw = await publicClient.readContract({
-        address: ESCROW_ADDRESS,
-        abi: bountyEscrowAbi,
-        functionName: "getSubmission",
-        args: [id],
-      });
-      const r = raw as unknown as {
-        bountyId: bigint;
-        developer: Address;
-        prNumber: bigint;
-        submittedAt: bigint;
-        verified: boolean;
-      };
-      const [verifiedLogs, paidLogs] = await Promise.all([
-        publicClient.getContractEvents({
+      const [raw, resolved, checksMask] = await Promise.all([
+        publicClient.readContract({
           address: ESCROW_ADDRESS,
           abi: bountyEscrowAbi,
-          eventName: "SubmissionVerified",
-          args: { submissionId: id },
-          fromBlock: 0n,
+          functionName: "getSubmission",
+          args: [id],
         }),
-        publicClient.getContractEvents({
+        publicClient.readContract({
           address: ESCROW_ADDRESS,
           abi: bountyEscrowAbi,
-          eventName: "BountyPaid",
-          args: {},
-          fromBlock: 0n,
+          functionName: "isResolved",
+          args: [id],
+        }),
+        publicClient.readContract({
+          address: ESCROW_ADDRESS,
+          abi: bountyEscrowAbi,
+          functionName: "submissionChecks",
+          args: [id],
         }),
       ]);
-      const lastVerified = verifiedLogs.at(-1)?.args as { success?: boolean } | undefined;
-      const paid = paidLogs.some(
-        (l) => (l.args as { bountyId?: bigint }).bountyId === r.bountyId,
-      );
+      const r = raw as unknown as RawSubmission;
       return {
         id,
         bountyId: r.bountyId,
         developer: r.developer,
         prNumber: r.prNumber,
         submittedAt: r.submittedAt,
-        verified: lastVerified ? Boolean(lastVerified.success) : null,
-        paid,
+        verified: resolved ? r.verified : null,
+        resolved: Boolean(resolved),
+        checks: Number(checksMask),
+        paid: r.verified === true,
       };
     } catch {
       return null;
@@ -263,31 +232,21 @@ export const onchainSource: ReadSource = {
   },
 
   async listSubmissionsByDeveloper(developer) {
+    assertConfigured();
     const logs = await publicClient.getContractEvents({
       address: ESCROW_ADDRESS,
       abi: bountyEscrowAbi,
       eventName: "SubmissionCreated",
       args: { developer: developer as ViemAddress },
-      fromBlock: 0n,
+      fromBlock: DEPLOY_BLOCK,
     });
-    const ts = await timestampsFor(logs.map((l) => (l.blockNumber ?? 0n) as bigint));
-    const submissions: Submission[] = [];
-    for (const log of logs) {
-      const a = log.args as { submissionId?: bigint; bountyId?: bigint; developer?: Address; prNumber?: bigint };
-      if (a.submissionId === undefined) continue;
-      submissions.push({
-        id: a.submissionId,
-        bountyId: a.bountyId ?? 0n,
-        developer: developer,
-        prNumber: a.prNumber ?? 0n,
-        submittedAt: ts.get((log.blockNumber ?? 0n) as bigint) ?? 0n,
-        verified: null,
-        paid: false,
-      });
-    }
-    // Enrich with verified/paid status.
-    return Promise.all(
-      submissions.map(async (s) => (await onchainSource.getSubmission(s.id)) ?? s),
+    const ids = logs
+      .map((l) => (l.args as { submissionId?: bigint }).submissionId)
+      .filter((v): v is bigint => v !== undefined);
+
+    const submissions = await Promise.all(
+      ids.map((id) => onchainSource.getSubmission(id)),
     );
+    return submissions.filter((s): s is Submission => s !== null);
   },
 };

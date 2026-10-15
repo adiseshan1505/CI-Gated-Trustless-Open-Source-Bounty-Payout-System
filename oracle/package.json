@@ -13,7 +13,7 @@
     "relayer": "node relayer.js"
   },
   "dependencies": {
-    "dotenv": "16.4.7",
+    "dotenv": "^16.4.7",
     "ethers": "6.17.0"
   }
 }

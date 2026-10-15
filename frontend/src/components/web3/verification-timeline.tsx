@@ -4,20 +4,13 @@ import { Check, Clock, Minus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   CHECK_LABEL,
+  CHECK_ORDER,
   type CheckId,
   type CheckResult,
   type VerificationState,
 } from "@/lib/contracts";
 
-const CHECK_ORDER: CheckId[] = ["prDate", "destRepo", "walletMatch", "ciPassed"];
-
-function CheckRow({
-  id,
-  result,
-}: {
-  id: CheckId;
-  result: CheckResult;
-}) {
+function CheckRow({ id, result }: { id: CheckId; result: CheckResult }) {
   const Icon = result === "pass" ? Check : result === "fail" ? X : Clock;
   const tone =
     result === "pass"
@@ -71,18 +64,47 @@ export function VerificationTimeline({
     );
   }
 
+  const total = CHECK_ORDER.length;
+  const passed = CHECK_ORDER.filter((id) => state.checks[id] === "pass").length;
+  const resolved = CHECK_ORDER.some((id) => state.checks[id] !== "unknown");
+  const allPassed = resolved && passed === total;
+
   return (
     <div className={cn("space-y-4", className)}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium uppercase tracking-wide text-faint">
+          Oracle checks
+        </span>
+        <span
+          className={cn(
+            "text-xs font-semibold",
+            !resolved
+              ? "text-faint"
+              : allPassed
+                ? "text-verify"
+                : "text-danger",
+          )}
+        >
+          {resolved ? `${passed}/${total} passed` : `${total} checks`}
+        </span>
+      </div>
+
       <ol className="relative space-y-3">
         {CHECK_ORDER.map((id) => (
           <CheckRow key={id} id={id} result={state.checks[id]} />
         ))}
       </ol>
+
       <div className="neu-divider" />
+
       <div className="flex items-center justify-between text-sm">
         <span className="text-muted">Oracle verdict</span>
         {state.verified === true ? (
           <span className="font-medium text-verify">Verified — paid out</span>
+        ) : state.verified === false && allPassed ? (
+          <span className="font-medium text-escrow">
+            Checks passed, bounty already claimed
+          </span>
         ) : state.verified === false ? (
           <span className="font-medium text-danger">
             Rejected — bounty reopened

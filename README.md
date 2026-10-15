@@ -10,7 +10,7 @@
 ![Chainlink](https://img.shields.io/badge/Chainlink-Functions-375BD2?logo=chainlink&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js)
 
-> **Project status:** The **escrow smart contract**, the **Chainlink Functions oracle source**, the **relayer** and the **Next.js frontend** are implemented and tested locally. The GitHub Actions verification workflow and the Sepolia deployment are still to do (see [Roadmap](#roadmap)).
+> **Project status:** The **escrow smart contract**, the **Chainlink Functions oracle source**, the **relayer** and the **Next.js frontend** are implemented and tested locally. The frontend reads the deployed contract and shows all six oracle checks from the `SubmissionChecks` event/`submissionChecks` mapping (with a mock fallback for offline development). The GitHub Actions verification workflow and the Sepolia deployment are still to do (see [Roadmap](#roadmap)).
 
 ---
 
@@ -243,7 +243,7 @@ stateDiagram-v2
 
 ### Contract Interface
 
-The public interface is [`contracts/contracts/interfaces/IBountyEscrow.sol`](contracts/contracts/interfaces/IBountyEscrow.sol) and the implementation is [`contracts/contracts/BountyEscrow.sol`](contracts/contracts/BountyEscrow.sol). The frontend's ABI ([`frontend/src/lib/contracts/abi.ts`](frontend/src/lib/contracts/abi.ts)) matches this interface exactly, so changing a struct or event is a breaking change.
+The public interface is [`contracts/contracts/interfaces/IBountyEscrow.sol`](contracts/contracts/interfaces/IBountyEscrow.sol) and the implementation is [`contracts/contracts/BountyEscrow.sol`](contracts/contracts/BountyEscrow.sol). The frontend's ABI ([`frontend/src/lib/contracts/abi.ts`](frontend/src/lib/contracts/abi.ts)) is generated from [`contracts/abi/BountyEscrow.json`](contracts/abi/BountyEscrow.json) with `npm run sync-abi`, so it matches this interface exactly — changing a struct or event is a breaking change.
 
 ```solidity
 interface IBountyEscrow {
@@ -531,11 +531,21 @@ Then create a bounty and a submission from the frontend (pointed at `localhost`)
 ```bash
 cd frontend
 npm install
-cp .env.example .env.local   # NEXT_PUBLIC_USE_MOCKS=false, NEXT_PUBLIC_ESCROW_ADDRESS=<deployed address>
+cp .env.example .env.local
+# then edit .env.local:
+#   NEXT_PUBLIC_USE_MOCKS=false
+#   NEXT_PUBLIC_ESCROW_ADDRESS=<deployed address>
+#   NEXT_PUBLIC_CHAIN_ID=11155111   # Sepolia, or 31337 for a local Hardhat node
+#   NEXT_PUBLIC_RPC_URL=            # optional custom RPC
+#   NEXT_PUBLIC_DEPLOY_BLOCK=       # block the escrow was deployed at (bounds event scans)
+npm run sync-abi   # regenerate the typed ABI from contracts/abi/BountyEscrow.json
 npm run dev
 ```
 
-With `NEXT_PUBLIC_USE_MOCKS=true` (the default) the UI runs against an in-browser mock. No contract is needed.
+The UI reads the six oracle checks straight from the contract (`submissionChecks` /
+`SubmissionChecks`) and derives timestamps from `bountyCreatedAt`, so it never
+guesses a result. With `NEXT_PUBLIC_USE_MOCKS=true` (the default) it runs against
+an in-browser mock instead — no contract is needed.
 
 ### Submitting a PR for a Bounty
 
@@ -568,10 +578,10 @@ With `NEXT_PUBLIC_USE_MOCKS=true` (the default) the UI runs against an in-browse
 - [x] Escrow smart contract (`makeBounty`, `makeSubmission`, `verifySubmission`, `payout`) with unit tests
 - [x] Chainlink Functions source for PR and CI verification, with offline tests and a live simulator
 - [x] Relayer verification path
-- [x] Next.js 14 frontend for creating bounties and tracking submissions (mock mode)
+- [x] Next.js 14 frontend for creating bounties and tracking submissions (real contract, with an offline mock fallback)
 - [ ] GitHub Actions verification workflow (protected `/tests`, Gitleaks, Trivy, network isolation) and demo target repo
 - [ ] Testnet deployment (Sepolia) and end-to-end demo
-- [ ] Frontend: switch to the deployed contract and show per-check results from `SubmissionChecks`
+- [x] Frontend: switch to the deployed contract and show per-check results from `SubmissionChecks`
 - [ ] Bounty deadlines and owner refunds
 - [ ] Security review of the contract and CI configuration
 

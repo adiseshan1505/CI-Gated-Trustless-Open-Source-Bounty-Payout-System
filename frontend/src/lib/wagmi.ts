@@ -1,6 +1,11 @@
 import { createConfig, http } from "wagmi";
 import { injected, mock, walletConnect } from "wagmi/connectors";
-import { CHAIN, USE_MOCKS, WALLETCONNECT_PROJECT_ID } from "@/lib/contracts/config";
+import {
+  CHAIN,
+  RPC_URL,
+  USE_MOCKS,
+  WALLETCONNECT_PROJECT_ID,
+} from "@/lib/contracts/config";
 
 const connectors = [
   injected({ shimDisconnect: true }),
@@ -23,7 +28,7 @@ export const wagmiConfig = createConfig({
   chains: [CHAIN],
   connectors,
   transports: {
-    [CHAIN.id]: http(),
+    [CHAIN.id]: http(RPC_URL),
   },
   ssr: true,
 });

@@ -3,9 +3,7 @@
  *
  * These are deliberately decoupled from the raw contract structs: the mock
  * adapter and the on-chain adapter both produce these shapes, so pages never
- * depend on where the data came from. Fields the proposed `IBountyEscrow`
- * does not yet expose (e.g. per-check oracle verdicts) are optional and the
- * UI degrades gracefully when they are absent.
+ * depend on where the data came from.
  */
 
 export const BountyStatus = {
@@ -30,7 +28,7 @@ export type Bounty = {
   issueNumber: bigint;
   amountWei: bigint;
   status: BountyStatus;
-  /** Block timestamp of `BountyCreated`, or mock creation time. */
+  /** Block timestamp of `BountyCreated` (contract `bountyCreatedAt`). */
   createdAt: bigint;
 };
 
@@ -40,20 +38,53 @@ export type Submission = {
   developer: Address;
   prNumber: bigint;
   submittedAt: bigint;
-  /** null = oracle has not reported yet. */
+  /** null = oracle has not reported yet; true = paid; false = rejected. */
   verified: boolean | null;
+  /** True once the oracle (DON or relayer) has resolved this submission. */
+  resolved: boolean;
+  /** 6-bit mask of passed oracle checks (`BountyEscrow.submissionChecks`). */
+  checks: number;
   paid: boolean;
 };
 
-export type CheckId = "prDate" | "destRepo" | "walletMatch" | "ciPassed";
-export type CheckResult = "pass" | "fail" | "unknown";
+/**
+ * Oracle checks, matching `CHECK_*` in `BountyEscrow.sol` and `CHECK` in
+ * `oracle/source.js`. The stored/emitted value is the OR of the passing bits.
+ */
+export const CHECK_BITS = {
+  prDate: 1 << 0,
+  destRepo: 1 << 1,
+  walletMatch: 1 << 2,
+  ciPassed: 1 << 3,
+  issueLinked: 1 << 4,
+  protectedPaths: 1 << 5,
+} as const;
+
+export type CheckId = keyof typeof CHECK_BITS;
+
+/** Every check passed (`ALL_CHECKS` in the contract). */
+export const ALL_CHECKS = 0x3f;
+
+/** Display order for the verification tracker. */
+export const CHECK_ORDER: CheckId[] = [
+  "prDate",
+  "destRepo",
+  "walletMatch",
+  "ciPassed",
+  "issueLinked",
+  "protectedPaths",
+];
 
 export const CHECK_LABEL: Record<CheckId, string> = {
-  prDate: "PR within bounty window",
+  prDate: "PR opened inside the bounty window",
   destRepo: "PR targets the funded repo",
-  walletMatch: "PR wallet matches signer",
-  ciPassed: "CI pipeline passed (Gitleaks, Trivy, tests)",
+  walletMatch: "Wallet in PR matches the submitter",
+  ciPassed: "CI passed (protect-tests, gitleaks, trivy, tests)",
+  issueLinked: "PR body closes the bounty issue",
+  protectedPaths: "PR leaves tests/ and .github/ untouched",
 };
+
+export type CheckResult = "pass" | "fail" | "unknown";
 
 export type VerificationState = {
   submission: "registered" | "none";
@@ -61,15 +92,21 @@ export type VerificationState = {
   verified: boolean | null;
 };
 
+export function emptyChecks(): Record<CheckId, CheckResult> {
+  return {
+    prDate: "unknown",
+    destRepo: "unknown",
+    walletMatch: "unknown",
+    ciPassed: "unknown",
+    issueLinked: "unknown",
+    protectedPaths: "unknown",
+  };
+}
+
 export function emptyVerification(): VerificationState {
   return {
     submission: "none",
-    checks: {
-      prDate: "unknown",
-      destRepo: "unknown",
-      walletMatch: "unknown",
-      ciPassed: "unknown",
-    },
+    checks: emptyChecks(),
     verified: null,
   };
 }

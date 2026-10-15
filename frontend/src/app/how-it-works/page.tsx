@@ -34,7 +34,7 @@ const FLOW = [
   },
   {
     title: "Oracle verifies",
-    body: "Chainlink Functions checks the PR date, destination repo, PR wallet vs msg.sender, and the CI status. It reports one verdict back on-chain.",
+    body: "Chainlink Functions checks six things \u2014 the PR date, the destination repo, the PR wallet vs msg.sender, the CI result, that the PR closes the issue, and that tests/ and .github/ are untouched \u2014 then reports a 6-bit verdict back on-chain.",
   },
   {
     title: "Automatic payout",
@@ -43,10 +43,12 @@ const FLOW = [
 ];
 
 const CHECKS = [
-  { title: "PR within the bounty window", body: "Stops reuse of old or unrelated pull requests." },
+  { title: "PR opened inside the bounty window", body: "Stops reuse of old or unrelated pull requests." },
   { title: "PR targets the funded repo", body: "Stops pointing the bounty at a repo the attacker controls." },
   { title: "PR wallet equals msg.sender", body: "Ties the PR author to the payout address; blocks claiming someone else's PR." },
-  { title: "Every CI check succeeded", body: "Confirms tests, Gitleaks and Trivy all passed with exit code 0." },
+  { title: "Every CI job succeeded", body: "protect-tests, gitleaks, trivy and tests all concluded success on the PR's head commit." },
+  { title: "PR closes the bounty issue", body: "Stops a PR fixing a different issue from claiming this bounty." },
+  { title: "Protected paths untouched", body: "tests/ and .github/ are unchanged, and PRs over 100 files fail closed." },
 ];
 
 const PIPELINE = [

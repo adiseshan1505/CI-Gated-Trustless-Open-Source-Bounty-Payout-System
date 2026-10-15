@@ -5,7 +5,7 @@ import { Check, Copy, ExternalLink } from "lucide-react";
 import { useEnsName } from "wagmi";
 import { cn } from "@/lib/utils";
 import { truncateAddress, explorerAddressUrl } from "@/lib/format";
-import { EXPLORER_BASE, type Address } from "@/lib/contracts";
+import { EXPLORER_BASE, CHAIN, CHAIN_ID, type Address } from "@/lib/contracts";
 import {
   Tooltip,
   TooltipContent,
@@ -24,9 +24,17 @@ export function AddressChip({
   className?: string;
 }) {
   const [copied, setCopied] = React.useState(false);
+  // Only ask for an ENS name on chains that actually have an ENS deployment
+  // (Sepolia does; a local Hardhat node does not). Passing the configured
+  // chainId keeps wagmi from falling back to a mainnet lookup.
+  const ensEnabled =
+    showEns &&
+    Boolean(address) &&
+    Boolean(CHAIN.contracts?.ensUniversalResolver);
   const { data: ens } = useEnsName({
     address: address as Address,
-    query: { enabled: showEns && Boolean(address) },
+    chainId: CHAIN_ID,
+    query: { enabled: ensEnabled },
   });
 
   if (!address) {

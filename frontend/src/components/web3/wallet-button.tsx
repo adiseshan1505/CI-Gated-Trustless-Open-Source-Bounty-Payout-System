@@ -29,7 +29,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { EXPLORER_BASE, type Address } from "@/lib/contracts";
+import { EXPLORER_BASE, CHAIN, CHAIN_ID, type Address } from "@/lib/contracts";
 import { explorerAddressUrl, truncateAddress } from "@/lib/format";
 
 export function WalletButton() {
@@ -38,7 +38,12 @@ export function WalletButton() {
   const { address, isConnected } = useAccount();
   const { connect, connectors, isPending, error } = useConnect();
   const { disconnect } = useDisconnect();
-  const { data: ens } = useEnsName({ address });
+  // Only resolve ENS on chains that have an ENS deployment (a Hardhat node does not).
+  const { data: ens } = useEnsName({
+    address,
+    chainId: CHAIN_ID,
+    query: { enabled: Boolean(address) && Boolean(CHAIN.contracts?.ensUniversalResolver) },
+  });
 
   React.useEffect(() => {
     if (error) toast.error(error.message.split("\n")[0]);

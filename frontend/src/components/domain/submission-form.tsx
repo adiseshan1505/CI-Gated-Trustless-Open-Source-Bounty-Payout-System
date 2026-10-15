@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   CheckCircle2,
+  Clock,
   GitPullRequest,
   Wallet,
 } from "lucide-react";
@@ -30,8 +31,8 @@ import { useBounty, useMakeSubmission } from "@/hooks/use-bounties";
 import {
   BountyStatus,
   CHECK_LABEL,
+  CHECK_ORDER,
   CHAIN_ID,
-  type CheckId,
 } from "@/lib/contracts";
 import { formatEth, githubIssueUrl } from "@/lib/format";
 
@@ -45,13 +46,14 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-const CHECK_IDS: CheckId[] = ["prDate", "destRepo", "walletMatch", "ciPassed"];
-
 export function SubmissionForm({ bountyId }: { bountyId: bigint }) {
   const { isConnected, address, chainId } = useAccount();
   const { data: bounty, isLoading } = useBounty(bountyId);
   const submit = useMakeSubmission();
-  const [result, setResult] = React.useState<{ hash: string } | null>(null);
+  const [result, setResult] = React.useState<{
+    hash: string;
+    submissionId: bigint;
+  } | null>(null);
 
   const {
     register,
@@ -86,11 +88,18 @@ export function SubmissionForm({ bountyId }: { bountyId: bigint }) {
           <p className="text-xs text-faint">
             Tx: <TxHashLink hash={result.hash} />
           </p>
-          <Button asChild variant="primary">
-            <Link href={`/bounties/${bounty.id.toString()}`}>
-              Back to bounty
-            </Link>
-          </Button>
+          <div className="flex flex-wrap justify-center gap-3">
+            <Button asChild variant="primary">
+              <Link href={`/submissions/${result.submissionId.toString()}`}>
+                Track submission
+              </Link>
+            </Button>
+            <Button asChild variant="secondary">
+              <Link href={`/bounties/${bounty.id.toString()}`}>
+                Back to bounty
+              </Link>
+            </Button>
+          </div>
         </CardContent>
       </Card>
     );
@@ -109,7 +118,7 @@ export function SubmissionForm({ bountyId }: { bountyId: bigint }) {
       { bountyId, prNumber: BigInt(getValues("prNumber")) },
       {
         onSuccess: (data) => {
-          setResult({ hash: data.hash });
+          setResult({ hash: data.hash, submissionId: data.submissionId });
           toast.success("Submission registered on-chain");
         },
         onError: (err) =>
@@ -128,6 +137,23 @@ export function SubmissionForm({ bountyId }: { bountyId: bigint }) {
           <CardTitle>Register your pull request</CardTitle>
         </CardHeader>
         <CardContent className="space-y-5">
+          <div className="flex items-start gap-3 rounded-neu-sm border border-escrow/40 bg-escrow/10 p-4 text-sm text-escrow">
+            <Clock className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>
+              <span className="font-semibold">
+                Submit only after CI is green.
+              </span>{" "}
+              The oracle reads the CI result once, the moment you register the
+              submission. If{" "}
+              <code className="font-mono text-xs">protect-tests</code>,{" "}
+              <code className="font-mono text-xs">gitleaks</code>,{" "}
+              <code className="font-mono text-xs">trivy</code> or{" "}
+              <code className="font-mono text-xs">tests</code> is still running
+              or failing, the submission is rejected — just submit again once
+              they pass.
+            </p>
+          </div>
+
           {bounty && (
             <div className="rounded-neu-sm border border-hairline bg-sunken/60 p-4 text-sm">
               <div className="flex items-center justify-between">
@@ -173,8 +199,9 @@ export function SubmissionForm({ bountyId }: { bountyId: bigint }) {
               <FieldError>{errors.prNumber.message}</FieldError>
             ) : (
               <FieldHint>
-                The PR must already be open against {bounty?.repo ?? "the repo"}{" "}
-                and target its base branch.
+                The PR must already be open against {bounty?.repo ?? "the repo"},
+                target its base branch, and close issue #
+                {bounty?.issueNumber.toString() ?? "…"} in its body.
               </FieldHint>
             )}
           </Field>
@@ -216,7 +243,7 @@ export function SubmissionForm({ bountyId }: { bountyId: bigint }) {
           <CardTitle>What gets checked</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
-          {CHECK_IDS.map((id) => (
+          {CHECK_ORDER.map((id) => (
             <div key={id} className="flex gap-2 text-muted">
               <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-verify" />
               <span>{CHECK_LABEL[id]}</span>
@@ -224,8 +251,9 @@ export function SubmissionForm({ bountyId }: { bountyId: bigint }) {
           ))}
           <div className="neu-divider" />
           <p className="text-xs text-faint">
-            All checks run on the original repository. If any fails, the
-            submission is rejected and the bounty reopens — no funds move.
+            All six checks run on the original repository. If any fails, the
+            submission is rejected and the bounty reopens — no funds move, and
+            you can submit again.
           </p>
         </CardContent>
       </Card>

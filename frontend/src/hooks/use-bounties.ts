@@ -6,6 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useAccount, useWriteContract } from "wagmi";
+import { decodeEventLog } from "viem";
 import {
   bountyEscrowAbi,
   ESCROW_ADDRESS,
@@ -56,8 +57,13 @@ export function useSubmission(id: bigint | undefined) {
     queryKey: queryKeys.submission(id?.toString() ?? "none"),
     queryFn: () => source.getSubmission(id!),
     enabled: id !== undefined,
-    refetchInterval: (query) =>
-      query.state.data?.verified == null ? 5000 : false,
+    // Poll until the oracle resolves the submission.
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data === undefined) return 5000;
+      if (data === null) return false;
+      return data.resolved ? false : 5000;
+    },
   });
 }
 
@@ -86,8 +92,31 @@ export function useCreateBounty() {
         args: [input.repo, input.issueNumber],
         value: input.amountWei,
       });
-      await publicClient.waitForTransactionReceipt({ hash });
-      return { bountyId: 0n, hash };
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+      let bountyId: bigint | undefined;
+      for (const log of receipt.logs) {
+        if (log.address.toLowerCase() !== ESCROW_ADDRESS.toLowerCase()) continue;
+        try {
+          const decoded = decodeEventLog({
+            abi: bountyEscrowAbi,
+            data: log.data,
+            topics: log.topics,
+          });
+          if (decoded.eventName === "BountyCreated") {
+            bountyId = (decoded.args as { bountyId: bigint }).bountyId;
+            break;
+          }
+        } catch {
+          /* not one of our events */
+        }
+      }
+      if (bountyId === undefined) {
+        throw new Error(
+          "Transaction confirmed but no BountyCreated event was found.",
+        );
+      }
+      return { bountyId, hash };
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.bounties });
@@ -111,8 +140,32 @@ export function useMakeSubmission() {
         functionName: "makeSubmission",
         args: [input.bountyId, input.prNumber],
       });
-      await publicClient.waitForTransactionReceipt({ hash });
-      return { submissionId: 0n, hash };
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+      let submissionId: bigint | undefined;
+      for (const log of receipt.logs) {
+        if (log.address.toLowerCase() !== ESCROW_ADDRESS.toLowerCase()) continue;
+        try {
+          const decoded = decodeEventLog({
+            abi: bountyEscrowAbi,
+            data: log.data,
+            topics: log.topics,
+          });
+          if (decoded.eventName === "SubmissionCreated") {
+            submissionId = (decoded.args as { submissionId: bigint })
+              .submissionId;
+            break;
+          }
+        } catch {
+          /* not one of our events */
+        }
+      }
+      if (submissionId === undefined) {
+        throw new Error(
+          "Transaction confirmed but no SubmissionCreated event was found.",
+        );
+      }
+      return { submissionId, hash };
     },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: queryKeys.bounties });

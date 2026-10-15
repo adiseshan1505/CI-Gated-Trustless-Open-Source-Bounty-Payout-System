@@ -23,7 +23,9 @@ const FILTERS: { value: Filter; label: string }[] = [
 export function BountyExplorer() {
   const { data, isLoading, isError, refetch } = useBounties();
   const [query, setQuery] = React.useState("");
-  const [filter, setFilter] = React.useState<Filter>("all");
+  // Default to Open so this section matches its "Open bounties" heading;
+  // Paid / Under-verification bounties stay reachable via the filter chips.
+  const [filter, setFilter] = React.useState<Filter>(BountyStatus.Open);
 
   const filtered = React.useMemo(() => {
     const list = data ?? [];

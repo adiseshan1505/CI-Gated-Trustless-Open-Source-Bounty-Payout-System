@@ -1,4 +1,5 @@
 import {
+  ALL_CHECKS,
   BountyStatus,
   type Address,
   type Bounty,
@@ -13,7 +14,7 @@ import {
  * `source.ts` when NEXT_PUBLIC_USE_MOCKS=false.
  */
 
-const STORAGE_KEY = "bounty-escrow-mock-v1";
+const STORAGE_KEY = "bounty-escrow-mock-v2";
 
 const DEMO_OWNER = "0xa11ce00000000000000000000000000000000001" as Address;
 const DEMO_DEV = "0xb0b0000000000000000000000000000000000002" as Address;
@@ -80,6 +81,8 @@ function seed(): { bounties: Bounty[]; submissions: Submission[] } {
       prNumber: 4330n,
       submittedAt: BigInt(t - 60 * 45),
       verified: null,
+      resolved: false,
+      checks: 0,
       paid: false,
     },
     {
@@ -89,7 +92,21 @@ function seed(): { bounties: Bounty[]; submissions: Submission[] } {
       prNumber: 1001n,
       submittedAt: BigInt(t - 60 * 60 * 24 * 8),
       verified: true,
+      resolved: true,
+      checks: ALL_CHECKS,
       paid: true,
+    },
+    // Rejected example: CI had not finished and the PR touched a protected path.
+    {
+      id: 2n,
+      bountyId: 3n,
+      developer: DEMO_DEV,
+      prNumber: 7n,
+      submittedAt: BigInt(t - 60 * 60 * 6),
+      verified: false,
+      resolved: true,
+      checks: 1 | 2 | 4 | 16,
+      paid: false,
     },
   ];
   return { bounties, submissions };
@@ -224,6 +241,8 @@ export const mockStore = {
       prNumber: input.prNumber,
       submittedAt: BigInt(now()),
       verified: null,
+      resolved: false,
+      checks: 0,
       paid: false,
     });
     const bounty = db.bounties.find((b) => b.id === input.bountyId);
