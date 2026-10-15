@@ -165,9 +165,13 @@ contract BountyEscrow is IBountyEscrow, FunctionsClient, Ownable, ReentrancyGuar
 
     /// @inheritdoc IBountyEscrow
     function verifySubmission(uint256 submissionId, bool success) external onlyRelayer {
-        if (submissionId >= _submissions.length) revert SubmissionNotFound(submissionId);
-        if (isResolved[submissionId]) revert AlreadyResolved(submissionId);
-        _resolve(submissionId, success ? ALL_CHECKS : 0);
+        _relayerResolve(submissionId, success ? ALL_CHECKS : 0);
+    }
+
+    /// @notice Relayer verdict carrying the per-check bitmask from oracle/source.js, so a
+    ///         rejection records which checks failed (as the Chainlink path does).
+    function verifySubmissionChecks(uint256 submissionId, uint8 checks) external onlyRelayer {
+        _relayerResolve(submissionId, checks & ALL_CHECKS);
     }
 
     /// @notice Claim a payout whose direct transfer failed (e.g. a contract wallet that
@@ -227,6 +231,12 @@ contract BountyEscrow is IBountyEscrow, FunctionsClient, Ownable, ReentrancyGuar
     // ---------------------------------------------------------------------
     // Settlement
     // ---------------------------------------------------------------------
+
+    function _relayerResolve(uint256 submissionId, uint8 checks) private {
+        if (submissionId >= _submissions.length) revert SubmissionNotFound(submissionId);
+        if (isResolved[submissionId]) revert AlreadyResolved(submissionId);
+        _resolve(submissionId, checks);
+    }
 
     /// @dev Effects before interactions; the only external call is the payout in `payout`.
     function _resolve(uint256 submissionId, uint8 checks) private nonReentrant {

@@ -217,6 +217,46 @@ describe("BountyEscrow", function () {
     });
   });
 
+  describe("verifySubmissionChecks (relayer path with per-check results)", function () {
+    it("records which checks failed on a rejection", async function () {
+      const { escrow, dev, relayer } = await loadFixture(bountyFixture);
+      await escrow.connect(dev).makeSubmission(0, PR);
+
+      await expect(escrow.connect(relayer).verifySubmissionChecks(0, 0x37))
+        .to.emit(escrow, "SubmissionChecks")
+        .withArgs(0, 0x37)
+        .and.to.emit(escrow, "SubmissionVerified")
+        .withArgs(0, false);
+      expect(await escrow.submissionChecks(0)).to.equal(0x37);
+      expect((await escrow.getBounty(0)).status).to.equal(Status.Open);
+    });
+
+    it("pays out when every check passed", async function () {
+      const { escrow, dev, relayer } = await loadFixture(bountyFixture);
+      await escrow.connect(dev).makeSubmission(0, PR);
+
+      const tx = escrow.connect(relayer).verifySubmissionChecks(0, ALL_CHECKS);
+      await expect(tx).to.emit(escrow, "BountyPaid").withArgs(0, dev.address, BOUNTY);
+      await expect(tx).to.changeEtherBalances([escrow, dev], [-BOUNTY, BOUNTY]);
+    });
+
+    it("ignores bits outside the known checks", async function () {
+      const { escrow, dev, relayer } = await loadFixture(bountyFixture);
+      await escrow.connect(dev).makeSubmission(0, PR);
+      await expect(escrow.connect(relayer).verifySubmissionChecks(0, 0xff)).to.emit(escrow, "BountyPaid");
+      expect(await escrow.submissionChecks(0)).to.equal(ALL_CHECKS);
+    });
+
+    it("is relayer-only and resolves a submission once", async function () {
+      const { escrow, dev, relayer, stranger } = await loadFixture(bountyFixture);
+      await escrow.connect(dev).makeSubmission(0, PR);
+      await expect(escrow.connect(stranger).verifySubmissionChecks(0, ALL_CHECKS)).to.be.revertedWithCustomError(escrow, "NotRelayer");
+      await escrow.connect(relayer).verifySubmissionChecks(0, 0);
+      await expect(escrow.connect(relayer).verifySubmissionChecks(0, ALL_CHECKS)).to.be.revertedWithCustomError(escrow, "AlreadyResolved");
+      await expect(escrow.connect(relayer).verifySubmissionChecks(9, ALL_CHECKS)).to.be.revertedWithCustomError(escrow, "SubmissionNotFound");
+    });
+  });
+
   describe("Chainlink Functions path", function () {
     async function submitWithRequest(ctx) {
       const tx = await ctx.escrow.connect(ctx.dev).makeSubmission(0, PR);
