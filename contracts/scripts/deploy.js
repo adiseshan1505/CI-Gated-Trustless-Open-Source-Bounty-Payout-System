@@ -73,7 +73,11 @@ async function main() {
 
   console.log("\nNext steps:");
   if (subscriptionId > 0n) console.log(`  - add ${address} as a consumer of subscription ${subscriptionId} at https://functions.chain.link`);
-  console.log(`  - frontend/.env.local: NEXT_PUBLIC_USE_MOCKS=false, NEXT_PUBLIC_ESCROW_ADDRESS=${address}`);
+  console.log("  - frontend/.env.local:");
+  console.log("      NEXT_PUBLIC_USE_MOCKS=false");
+  console.log(`      NEXT_PUBLIC_ESCROW_ADDRESS=${address}`);
+  console.log(`      NEXT_PUBLIC_CHAIN_ID=${record.chainId}`);
+  console.log(`      NEXT_PUBLIC_DEPLOY_BLOCK=${receipt.blockNumber}`);
   if (relayer !== ethers.ZeroAddress) console.log(`  - oracle/.env: ESCROW_ADDRESS=${address}, FROM_BLOCK=${receipt.blockNumber}`);
 }
 
