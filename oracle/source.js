@@ -21,7 +21,11 @@ const MAX_FILES = 100;
 
 const [repo, issueNumber, prNumber, developer, bountyCreatedAt, submittedAt] = args;
 
-const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+const headers = {
+  Accept: "application/vnd.github+json",
+  "X-GitHub-Api-Version": "2022-11-28",
+  "User-Agent": "ci-gated-bounty-oracle", // GitHub rejects API requests without one
+};
 if (typeof secrets !== "undefined" && secrets.githubToken) {
   headers.Authorization = `Bearer ${secrets.githubToken}`;
 }

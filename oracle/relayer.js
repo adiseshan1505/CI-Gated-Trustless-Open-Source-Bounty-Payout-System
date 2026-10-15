@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Relayer: the non-Chainlink verification path. Watches BountyEscrow for new
 // submissions, runs the same source.js checks off-chain and reports the verdict
-// with verifySubmission(). The signer must be the contract's `relayer`.
+// with verifySubmissionChecks(). The signer must be the contract's `relayer`.
 //
 //   node relayer.js          # poll forever
 //   node relayer.js --once   # single pass (e.g. from cron or a scheduled workflow)
@@ -9,7 +9,7 @@ require("dotenv").config();
 const fs = require("node:fs");
 const path = require("node:path");
 const { ethers } = require("ethers");
-const { runSource } = require("./lib/run-source");
+const { runSource, ALL_CHECKS } = require("./lib/run-source");
 
 const ABI_PATH = path.join(__dirname, "..", "contracts", "abi", "BountyEscrow.json");
 // GitHub statuses that mean the PR can never verify; anything else is retried.
@@ -29,10 +29,10 @@ async function processSubmission(escrow, submissionId, secrets) {
   const createdAt = await escrow.bountyCreatedAt(sub.bountyId);
   const args = [bounty.repo, bounty.issueNumber, sub.prNumber, sub.developer, createdAt, sub.submittedAt];
 
-  let passed;
+  let checks;
   try {
     const result = await runSource({ args, secrets });
-    passed = result.passed;
+    checks = result.checks;
     console.log(`#${submissionId} ${bounty.repo}#${sub.prNumber}`, JSON.stringify(result.detail));
   } catch (err) {
     const status = Number((err.message.match(/failed: (\d{3})/) || [])[1]);
@@ -41,12 +41,14 @@ async function processSubmission(escrow, submissionId, secrets) {
       return;
     }
     console.log(`#${submissionId} rejected: ${err.message}`);
-    passed = false;
+    checks = 0;
   }
 
-  const tx = await escrow.verifySubmission(submissionId, passed);
+  // Report the full bitmask so the contract (and UI) record which checks failed.
+  const tx = await escrow.verifySubmissionChecks(submissionId, checks);
   await tx.wait();
-  console.log(`#${submissionId} ${passed ? "VERIFIED -> paid" : "REJECTED"} (tx ${tx.hash})`);
+  const passed = checks === ALL_CHECKS;
+  console.log(`#${submissionId} checks=0x${checks.toString(16)} ${passed ? "VERIFIED -> paid" : "REJECTED"} (tx ${tx.hash})`);
 }
 
 async function main() {

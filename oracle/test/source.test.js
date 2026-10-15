@@ -57,6 +57,7 @@ test("sends the GitHub token only when a secret is provided", async () => {
   const anon = github();
   await run(anon);
   assert.equal(anon.calls[0].headers.Authorization, undefined);
+  assert.ok(anon.calls[0].headers["User-Agent"], "GitHub requires a User-Agent");
 
   const authed = github();
   await run(authed, { secrets: { githubToken: "ghp_test" } });
